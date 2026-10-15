@@ -1,0 +1,16 @@
+# 先按 README 发布 HelloApp，再运行打包命令。
+appId: com.example.dotnetnsis.hello
+productName: NSIS 示例应用
+version: 1.0.0
+publisher: 示例公司
+appDirectory: ./publish
+executable: HelloApp.exe
+outputDirectory: ../artifacts/installers
+arch: x64
+nsis:
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: false

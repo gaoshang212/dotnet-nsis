@@ -1,0 +1,27 @@
+name: 构建与验证
+on:
+  push:
+  pull_request:
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore --locked-mode
+      - run: dotnet test --no-restore
+      - name: 真实构建和当前用户安装验证
+        shell: powershell
+        run: ./scripts/test-integration.ps1 -Install
+      - run: dotnet publish src/DotnetNsis -c Release -r win-x64 --self-contained true -o artifacts/cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-nsis-win-x64
+          path: artifacts/cli
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 测试结果
+          path: tests/**/TestResults/*.trx

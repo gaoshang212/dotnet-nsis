@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/DotnetNsis/DotnetNsis.csproj" />
+  <Project Path="tests/DotnetNsis.Tests/DotnetNsis.Tests.csproj" />
+</Solution>

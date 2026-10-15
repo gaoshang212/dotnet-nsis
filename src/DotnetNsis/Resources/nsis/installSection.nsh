@@ -1,0 +1,139 @@
+!include installer.nsh
+
+InitPluginsDir
+
+${IfNot} ${Silent}
+  SetDetailsPrint none
+${endif}
+
+StrCpy $appExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+
+# must be called before uninstallOldVersion
+!insertmacro setLinkVars
+
+!ifdef ONE_CLICK
+  !ifdef HEADER_ICO
+    File /oname=$PLUGINSDIR\installerHeaderico.ico "${HEADER_ICO}"
+  !endif
+  ${IfNot} ${Silent}
+    !ifdef HEADER_ICO
+      SpiderBanner::Show /MODERN /ICON "$PLUGINSDIR\installerHeaderico.ico"
+    !else
+      SpiderBanner::Show /MODERN
+    !endif
+
+    FindWindow $0 "#32770" "" $hwndparent
+    FindWindow $0 "#32770" "" $hwndparent $0
+    GetDlgItem $0 $0 1000
+    SendMessage $0 ${WM_SETTEXT} 0 "STR:$(installing)"
+
+    StrCpy $1 $hwndparent
+		System::Call 'user32::ShutdownBlockReasonCreate(${SYSTYPE_PTR}r1, w "$(installing)")'
+  ${endif}
+  !insertmacro CHECK_APP_RUNNING
+!else
+  ${ifNot} ${UAC_IsInnerInstance}
+    !insertmacro CHECK_APP_RUNNING
+  ${endif}
+!endif
+
+Var /GLOBAL keepShortcuts
+StrCpy $keepShortcuts "false"
+!insertMacro setIsTryToKeepShortcuts
+${if} $isTryToKeepShortcuts == "true"
+  ReadRegStr $R1 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" KeepShortcuts
+
+  ${if} $R1 == "true"
+  ${andIf} ${FileExists} "$appExe"
+    StrCpy $keepShortcuts "true"
+  ${endIf}
+${endif}
+
+# nsis-web: the app package is copied, verified and, if needed, downloaded before the installed version is uninstalled, so a package
+# that is refused or cannot be downloaded leaves that version in place. Empty for other installers.
+!insertmacro prepareWebPackage
+
+# nsis-web: the app may have been started again while the package was downloaded, check again (see CHECK_APP_RUNNING_AGAIN)
+!ifdef WEB_PACKAGE_PREPARED
+  !ifdef ONE_CLICK
+    !insertmacro CHECK_APP_RUNNING_AGAIN
+  !else
+    ${ifNot} ${UAC_IsInnerInstance}
+      !insertmacro CHECK_APP_RUNNING_AGAIN
+    ${endif}
+  !endif
+!endif
+
+!insertmacro uninstallOldVersion SHELL_CONTEXT
+!insertmacro handleUninstallResult SHELL_CONTEXT
+
+${if} $installMode == "all"
+  !insertmacro uninstallOldVersion HKEY_CURRENT_USER
+  !insertmacro handleUninstallResult HKEY_CURRENT_USER
+${endIf}
+
+SetOutPath $INSTDIR
+
+!ifdef UNINSTALLER_ICON
+  File /oname=uninstallerIcon.ico "${UNINSTALLER_ICON}"
+!endif
+
+!insertmacro installApplicationFiles
+
+# Self-identify the install method for the auto-updater (parity with the Linux `package-type` marker).
+# This is the only install-time signal that differs between nsis and nsis-web — the app payload itself is
+# byte-identical (both targets share one app archive). electron-updater reads this to default
+# disableWebInstaller=false for nsis-web installs.
+FileOpen $0 "$INSTDIR\resources\package-type" w
+!ifdef APP_PACKAGE_URL
+  FileWrite $0 "nsis-web"
+!else
+  FileWrite $0 "nsis"
+!endif
+FileClose $0
+ClearErrors
+
+!insertmacro registryAddInstallInfo
+!insertmacro addStartMenuLink $keepShortcuts
+!insertmacro addDesktopLink $keepShortcuts
+
+${if} ${FileExists} "$newStartMenuLink"
+  StrCpy $launchLink "$newStartMenuLink"
+${else}
+  StrCpy $launchLink "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+${endIf}
+
+!ifmacrodef registerFileAssociations
+  !insertmacro registerFileAssociations
+!endif
+
+!ifmacrodef customInstall
+  !insertmacro customInstall
+!endif
+
+!macro doStartApp
+  # otherwise app window will be in background
+  HideWindow
+  !insertmacro StartApp
+!macroend
+
+!ifdef ONE_CLICK
+  # https://github.com/electron-userland/electron-builder/pull/3093#issuecomment-403734568
+  !ifdef RUN_AFTER_FINISH
+    ${ifNot} ${Silent}
+    ${orIf} ${isForceRun}
+      !insertmacro doStartApp
+    ${endIf}
+  !else
+    ${if} ${isForceRun}
+      !insertmacro doStartApp
+    ${endIf}
+  !endif
+  !insertmacro quitSuccess
+!else
+  # for assisted installer run only if silent, because assisted installer has run after finish option
+  ${if} ${isForceRun}
+  ${andIf} ${Silent}
+    !insertmacro doStartApp
+  ${endIf}
+!endif

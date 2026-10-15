@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>dotnet-nsis</AssemblyName>
+    <RootNamespace>DotnetNsis</RootNamespace>
+    <Version>0.1.0</Version>
+    <!-- 固定交付目标，避免普通还原和自包含发布生成不同的依赖锁。 -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.13" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <Content Include="Resources/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <InternalsVisibleTo Include="DotnetNsis.Tests" />
+  </ItemGroup>
+</Project>
