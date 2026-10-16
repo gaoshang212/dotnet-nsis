@@ -132,7 +132,17 @@ nsis:
 
 安装器和卸载器两阶段均加载脚本，`BUILD_UNINSTALLER` 只在生成卸载器阶段定义。`preInit` 也会在构建时的卸载器生成程序中运行；仅需安装时执行的动作放在 `customInit` 或 `customInstall`。`!system` 等预处理指令在编译时执行，`customRemoveFiles` 会替换默认文件清理。只使用可信脚本，并自行负责自定义动作的升级和卸载行为。脚本编译错误保留在失败目录的 `build.log` 中。
 
-完整示例见 [installer.nsh](examples/build/installer.nsh)，包括欢迎页和附加资源复制。
+完整示例见 [installer.nsh](examples/build/installer.nsh)，包括欢迎页、数据目录选择页和附加资源复制。
+
+示例在安装目录页之后显示“数据存储文件夹”，支持输入路径和浏览文件夹，默认使用最终安装目录下的 `Data`。安装时创建所选目录，并通过 Windows PowerShell 将绝对路径写入安装目录的 UTF-8 文件 `data-directory.json`；升级时读取已有 JSON 配置。静默及一键安装不显示此页，优先使用已有配置，否则使用默认目录。此配置用于演示，`HelloApp` 不读取它。
+
+```json
+{
+  "dataDirectory": "D:\\应用数据"
+}
+```
+
+示例不修改数据目录权限。安装目录内的数据会随升级或卸载清理；需要长期保留数据时，请选择安装目录外且应用用户可写的位置。
 
 ## 示例
 
