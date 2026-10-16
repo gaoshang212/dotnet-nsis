@@ -8,6 +8,10 @@ executable: HelloApp.exe
 outputDirectory: ../artifacts/installers
 arch: x64
 nsis:
+  include: ./build/installer.nsh
+  # 可选：填入自己的 ICO 文件路径。
+  # installerIcon: ./build/installer.ico
+  # uninstallerIcon: ./build/uninstaller.ico
   oneClick: false
   perMachine: true
   allowToChangeInstallationDirectory: true

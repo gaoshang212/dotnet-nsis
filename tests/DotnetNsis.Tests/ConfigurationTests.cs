@@ -46,6 +46,86 @@ public sealed class ConfigurationTests
         Assert.False(result.Config.Nsis.PerMachine);
         Assert.False(result.Config.Nsis.RunAfterFinish);
         Assert.True(result.Config.Nsis.CreateDesktopShortcut);
+        Assert.Null(result.IncludeFile);
+        Assert.Null(result.InstallerIconFile);
+        Assert.Null(result.UninstallerIconFile);
+    }
+
+    /// <summary>验证两个图标字段均按 YAML 所在目录解析，允许绝对路径及中文、空格和美元符号。</summary>
+    [Theory]
+    [InlineData("installerIcon", false)]
+    [InlineData("installerIcon", true)]
+    [InlineData("uninstallerIcon", false)]
+    [InlineData("uninstallerIcon", true)]
+    public void ResolvesIconPaths(string key, bool absolute)
+    {
+        using var temp = new TestDirectory();
+        temp.File("配置/应用目录/bin/启动.exe");
+        var icon = IconFixture.Create(temp, "配置/图标 $/应用.ICO");
+        var value = absolute ? icon : "./图标 $/应用.ICO";
+        var config = Configuration.Load(temp.File("配置/nsis.yml", Yaml + $"\nnsis:\n  {key}: '{value}'"));
+        Assert.Equal(icon, key == "installerIcon" ? config.InstallerIconFile : config.UninstallerIconFile);
+        Assert.Null(key == "installerIcon" ? config.UninstallerIconFile : config.InstallerIconFile);
+    }
+
+    /// <summary>验证缺失、空白、错误扩展名、伪造 ICO 及越界图像数据会报告对应配置项。</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("missing.ico")]
+    [InlineData("folder.ico")]
+    [InlineData("image.png")]
+    [InlineData("fake.ico")]
+    [InlineData("truncated.ico")]
+    [InlineData("${ROOT}/image.ico")]
+    public void RejectsInvalidIcons(string value)
+    {
+        using var temp = new TestDirectory();
+        temp.File("应用目录/bin/启动.exe");
+        temp.File("image.png");
+        temp.File("fake.ico", "不是 ICO 文件");
+        Directory.CreateDirectory(Path.Combine(temp.Root, "folder.ico"));
+        var truncated = IconFixture.Create(temp, "truncated.ico");
+        using (var file = File.OpenWrite(truncated)) file.SetLength(23);
+        foreach (var key in new[] { "installerIcon", "uninstallerIcon" })
+        {
+            var error = Assert.Throws<ConfigException>(() =>
+                Configuration.Load(temp.File("nsis.yml", Yaml + $"\nnsis:\n  {key}: '{value}'")));
+            Assert.Contains("nsis." + key, error.Message);
+        }
+    }
+
+    /// <summary>验证自定义脚本支持配置目录相对路径、绝对路径和多层中文目录。</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ResolvesCustomIncludeFromConfigurationDirectory(bool absolute)
+    {
+        using var temp = new TestDirectory();
+        temp.File("配置/应用目录/bin/启动.exe");
+        var include = temp.File("配置/构建 资源 $/子目录/installer.NSH");
+        var configuredPath = absolute ? include : "./构建 资源 $/子目录/installer.NSH";
+        var result = Configuration.Load(temp.File("配置/nsis.yml", Yaml + $"\nnsis:\n  include: '{configuredPath}'"));
+        Assert.Equal(Path.GetFullPath(include), result.IncludeFile);
+        Assert.Equal(configuredPath, result.Config.Nsis.Include);
+    }
+
+    /// <summary>验证空路径、缺失文件、目录、错误扩展名及预处理表达式均报告配置错误。</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("missing.nsh")]
+    [InlineData("folder.nsh")]
+    [InlineData("installer.nsi")]
+    [InlineData("${HOME}/installer.nsh")]
+    public void RejectsInvalidCustomInclude(string include)
+    {
+        using var temp = new TestDirectory();
+        temp.File("应用目录/bin/启动.exe");
+        temp.File("installer.nsi");
+        Directory.CreateDirectory(Path.Combine(temp.Root, "folder.nsh"));
+        Assert.Throws<ConfigException>(() =>
+            Configuration.Load(temp.File("nsis.yml", Yaml + $"\nnsis:\n  include: '{include}'")));
     }
 
     /// <summary>验证未知字段、重复字段、非法选项和输出目录冲突会被拒绝。</summary>

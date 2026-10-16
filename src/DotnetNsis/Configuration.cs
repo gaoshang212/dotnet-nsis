@@ -33,6 +33,12 @@ public sealed class PackageConfig
 /// <summary>控制 NSIS 安装包的用户交互及安装行为。</summary>
 public sealed class NsisOptions
 {
+    /// <summary>可选的自定义 .nsh 文件；相对路径以配置文件所在目录为基准。</summary>
+    public string? Include { get; set; }
+    /// <summary>安装器的 .ico 文件路径；省略时使用 NSIS 默认图标。</summary>
+    public string? InstallerIcon { get; set; }
+    /// <summary>卸载器及卸载列表的 .ico 文件路径；省略时保留默认行为。</summary>
+    public string? UninstallerIcon { get; set; }
     /// <summary>是否采用一键安装；默认显示安装向导。</summary>
     public bool OneClick { get; set; }
     /// <summary>是否安装到整台电脑并请求提权；默认只安装到当前用户。</summary>
@@ -57,6 +63,12 @@ public sealed class NsisOptions
 public sealed record ValidatedConfig(PackageConfig Config, string InputDirectory, string OutputDirectory,
     string ExecutableRelativePath, string SafeName, string AppGuid)
 {
+    /// <summary>自定义 .nsh 文件的绝对路径；未配置时为 null。</summary>
+    public string? IncludeFile { get; init; }
+    /// <summary>安装器图标的绝对路径；未配置时为 null。</summary>
+    public string? InstallerIconFile { get; init; }
+    /// <summary>卸载器图标的绝对路径；未配置时为 null。</summary>
+    public string? UninstallerIconFile { get; init; }
     /// <summary>由安全名称、版本和目标架构组成的安装包文件名。</summary>
     public string ArtifactName => $"{SafeName}-{Config.Version}-{Config.Arch}-Setup.exe";
 }
@@ -76,6 +88,10 @@ public static class Configuration
         outputDirectory: ./dist
         arch: x64
         nsis:
+          # 可选：通过宏扩展默认模板，路径相对本配置文件。
+          # include: ./build/installer.nsh
+          # installerIcon: ./build/installer.ico
+          # uninstallerIcon: ./build/uninstaller.ico
           oneClick: false
           perMachine: false
           allowToChangeInstallationDirectory: true
@@ -128,6 +144,20 @@ public static class Configuration
             throw new ConfigException("arch 必须为 x64、x86 或 arm64。");
         if (config.Nsis is null) throw new ConfigException("nsis 不能为 null。");
 
+        string? includeFile = null;
+        if (config.Nsis.Include is not null)
+        {
+            CheckText(config.Nsis.Include, "nsis.include");
+            includeFile = Path.GetFullPath(config.Nsis.Include, baseDirectory);
+            CheckText(includeFile, "nsis.include 绝对路径");
+            if (!includeFile.EndsWith(".nsh", StringComparison.OrdinalIgnoreCase))
+                throw new ConfigException("nsis.include 必须指向 .nsh 文件。");
+            if (!File.Exists(includeFile)) throw new ConfigException($"自定义 NSIS 文件不存在：{includeFile}");
+            Paths.RejectReparseAncestors(Path.GetDirectoryName(includeFile)!);
+            if ((File.GetAttributes(includeFile) & FileAttributes.ReparsePoint) != 0)
+                throw new ConfigException($"自定义 NSIS 文件不能是符号链接：{includeFile}");
+        }
+
         var input = Path.TrimEndingDirectorySeparator(Path.GetFullPath(config.AppDirectory, baseDirectory));
         var output = Path.TrimEndingDirectorySeparator(Path.GetFullPath(config.OutputDirectory, baseDirectory));
         if (!Directory.Exists(input)) throw new ConfigException($"应用目录不存在：{input}");
@@ -146,7 +176,44 @@ public static class Configuration
         var safe = SafeName(config.ProductName);
         if (File.Exists(Path.Combine(input, $"Uninstall {safe}.exe")))
             throw new ConfigException("输入目录包含与生成卸载器重名的文件。");
-        return new(config, input, output, Path.GetRelativePath(input, exe), safe, StableGuid(config.AppId));
+        return new(config, input, output, Path.GetRelativePath(input, exe), safe, StableGuid(config.AppId))
+        {
+            IncludeFile = includeFile,
+            InstallerIconFile = ValidateIcon(config.Nsis.InstallerIcon, baseDirectory, "nsis.installerIcon"),
+            UninstallerIconFile = ValidateIcon(config.Nsis.UninstallerIcon, baseDirectory, "nsis.uninstallerIcon")
+        };
+    }
+
+    /// <summary>解析可选图标路径，检查文件类型、链接和 ICO 目录结构；图像解码交由 NSIS。</summary>
+    private static string? ValidateIcon(string? value, string baseDirectory, string key)
+    {
+        if (value is null) return null;
+        CheckText(value, key);
+        var path = Path.GetFullPath(value, baseDirectory);
+        CheckText(path, key);
+        if (!path.EndsWith(".ico", StringComparison.OrdinalIgnoreCase))
+            throw new ConfigException($"{key} 必须指向 .ico 文件。");
+        if (!File.Exists(path)) throw new ConfigException($"{key} 图标文件不存在：{path}");
+        Paths.RejectReparseAncestors(Path.GetDirectoryName(path)!);
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new ConfigException($"{key} 图标文件不能是符号链接：{path}");
+        using var stream = File.OpenRead(path);
+        using var reader = new BinaryReader(stream);
+        if (stream.Length < 6 || reader.ReadUInt16() != 0 || reader.ReadUInt16() != 1)
+            throw new ConfigException($"{key} 不是有效的 ICO 文件：{path}");
+        var count = reader.ReadUInt16();
+        var directorySize = 6L + count * 16L;
+        if (count == 0 || stream.Length < directorySize)
+            throw new ConfigException($"{key} 的 ICO 图像目录不完整：{path}");
+        for (var i = 0; i < count; i++)
+        {
+            stream.Position = 6L + i * 16L + 8;
+            var size = reader.ReadUInt32();
+            var offset = reader.ReadUInt32();
+            if (size == 0 || offset < directorySize || (long)offset + size > stream.Length)
+                throw new ConfigException($"{key} 的 ICO 图像数据不完整：{path}");
+        }
+        return path;
     }
 
     /// <summary>检查文本长度及必填约束，拒绝控制字符和 NSIS 预处理表达式。</summary>

@@ -170,6 +170,21 @@ public static class TemplateAdapter
                 Line($"LangString {key} 2052 \"{value.Replace("\r\n", "\n").Replace("\n", "$\\r$\\n")}\"");
             }
         }
+        // MUI 图标必须在加载页面模板前定义；卸载图标同时用于系统卸载列表。
+        if (validated.InstallerIconFile is { } installerIcon) DefinePath("MUI_ICON", installerIcon);
+        if (validated.UninstallerIconFile is { } uninstallerIcon)
+        {
+            DefinePath("MUI_UNICON", uninstallerIcon);
+            DefinePath("UNINSTALLER_ICON", uninstallerIcon);
+        }
+        // 两阶段均先加载用户宏；保留模板工作目录，避免同名文件覆盖上游内置宏。
+        if (validated.IncludeFile is { } includeFile)
+        {
+            var resources = Path.GetDirectoryName(includeFile)!;
+            DefinePath("BUILD_RESOURCES_DIR", resources);
+            Line("!addincludedir " + QuoteCompileTime(resources));
+            Line("!include " + QuoteCompileTime(includeFile));
+        }
         Line("!include installer.nsi");
         return script.ToString();
     }

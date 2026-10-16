@@ -70,6 +70,43 @@ public sealed class IntegrationTests
     /// <summary>创建使用本机共享工具缓存的构建器，避免每个用例重复下载。</summary>
     private static PackageBuilder Builder(HttpClient http) => new(new ToolCache(http, ToolCache.DefaultDirectory));
 
+    /// <summary>配置颜色不同的安装和卸载图标，防止两阶段误用同一个资源。</summary>
+    private static void AddIcons(TestDirectory temp, PackageConfig config)
+    {
+        config.Nsis.InstallerIcon = IconFixture.Create(temp, "图标 $/安装.ico", 0xff3366cc);
+        config.Nsis.UninstallerIcon = IconFixture.Create(temp, "图标 $/卸载.ico", 0xffcc6633);
+    }
+
+    /// <summary>添加嵌套脚本和额外资源，验证安装、卸载钩子及两阶段预处理分支。</summary>
+    private static void AddCustomInclude(TestDirectory temp, PackageConfig config)
+    {
+        config.Nsis.Include = "构建 资源 $/installer.nsh";
+        temp.File(config.Nsis.Include, """
+            ; 从自定义脚本目录查找嵌套头文件。
+            !include "hooks\actions.nsh"
+            """);
+        temp.File("构建 资源 $/extra.txt", "自定义资源内容");
+        temp.File("构建 资源 $/hooks/actions.nsh", """
+            ; 为安装器提供欢迎页和资源复制逻辑。
+            !ifndef BUILD_UNINSTALLER
+              !macro customWelcomePage
+                !insertmacro MUI_PAGE_WELCOME
+              !macroend
+              !macro customInstall
+                SetOutPath "$INSTDIR"
+                File /oname=custom-resource.txt "${BUILD_RESOURCES_DIR}\extra.txt"
+              !macroend
+            !else
+              ; 在安装目录外留下标记，证明最终卸载器执行了自定义钩子。
+              !macro customUnInstall
+                FileOpen $0 "$INSTDIR\..\custom-uninstalled.txt" w
+                FileWrite $0 "custom uninstall"
+                FileClose $0
+              !macroend
+            !endif
+            """);
+    }
+
     /// <summary>验证每组构建输入均生成 Windows 可执行安装包，并清理成功构建的临时目录。</summary>
     [BuildIntegration]
     [MemberData(nameof(Matrix))]
@@ -78,10 +115,17 @@ public sealed class IntegrationTests
         using var temp = new TestDirectory();
         using var http = new HttpClient();
         CopyFixture(temp, arch);
-        var config = Configuration.Validate(Config(Guid.NewGuid().ToString("N"), arch, oneClick, perMachine), temp.Root);
+        var settings = Config(Guid.NewGuid().ToString("N"), arch, oneClick, perMachine);
+        AddCustomInclude(temp, settings);
+        AddIcons(temp, settings);
+        // 在构建矩阵中覆盖独立配置，安装测试另行覆盖同时配置两个图标。
+        if (arch == "x86") settings.Nsis.InstallerIcon = null;
+        if (arch == "arm64") settings.Nsis.UninstallerIcon = null;
+        var config = Configuration.Validate(settings, temp.Root);
         var output = await Builder(http).BuildAsync(config, default);
         Assert.True(new FileInfo(output).Length > 100_000);
         Assert.Equal(new byte[] { 0x4d, 0x5a }, File.ReadAllBytes(output)[..2]);
+        if (config.InstallerIconFile is { } icon) IconFixture.AssertEmbedded(output, icon);
         Assert.Empty(Directory.GetDirectories(config.OutputDirectory, ".dotnet-nsis-*"));
     }
 
@@ -97,9 +141,12 @@ public sealed class IntegrationTests
         using var http = new HttpClient();
         CopyFixture(temp, arch);
         var config = Config(Guid.NewGuid().ToString("N"), arch, oneClick, false);
+        AddCustomInclude(temp, config);
+        AddIcons(temp, config);
         var first = Configuration.Validate(config, temp.Root);
         var install = Path.Combine(temp.Root, "安装 目录", first.SafeName);
         var uninstall = Path.Combine(install, $"Uninstall {first.SafeName}.exe");
+        var uninstallMarker = Path.Combine(Path.GetDirectoryName(install)!, "custom-uninstalled.txt");
         var desktopLink = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), first.SafeName + ".lnk");
         var menuLink = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), first.SafeName + ".lnk");
         var dataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), first.SafeName);
@@ -113,6 +160,12 @@ public sealed class IntegrationTests
             var output = await Builder(http).BuildAsync(first, default);
             await RunInstaller(output, "/S /D=" + install, temp.Root);
             Assert.True(File.Exists(uninstall));
+            IconFixture.AssertEmbedded(output, first.InstallerIconFile!);
+            IconFixture.AssertEmbedded(uninstall, first.UninstallerIconFile!);
+            var installedIcon = Path.Combine(install, "uninstallerIcon.ico");
+            Assert.Equal(File.ReadAllBytes(first.UninstallerIconFile!), File.ReadAllBytes(installedIcon));
+            using (var key = registry.OpenSubKey(uninstallKey)) Assert.Equal(installedIcon, key?.GetValue("DisplayIcon"));
+            Assert.Equal("自定义资源内容", File.ReadAllText(Path.Combine(install, "custom-resource.txt")));
             Assert.True(Directory.Exists(Path.Combine(install, "空目录")));
             foreach (var source in Paths.EnumerateFiles(first.InputDirectory))
             {
@@ -135,10 +188,16 @@ public sealed class IntegrationTests
             output = await Builder(http).BuildAsync(second, default);
             await RunInstaller(output, "/S /D=" + install, temp.Root);
             Assert.Equal("新版本", File.ReadAllText(Path.Combine(install, "资源", "新文件.txt")));
+            IconFixture.AssertEmbedded(uninstall, second.UninstallerIconFile!);
             Assert.False(File.Exists(Path.Combine(install, ".hidden")));
+            Assert.Equal("自定义资源内容", File.ReadAllText(Path.Combine(install, "custom-resource.txt")));
+            Assert.Equal("custom uninstall", File.ReadAllText(uninstallMarker));
+            File.Delete(uninstallMarker);
             using (var key = registry.OpenSubKey(uninstallKey)) Assert.Equal("1.1.0", key?.GetValue("DisplayVersion"));
             await RunInstaller(uninstall, "/S _?=" + install, temp.Root);
+            Assert.Equal("custom uninstall", File.ReadAllText(uninstallMarker));
             Assert.False(File.Exists(Path.Combine(install, first.ExecutableRelativePath)));
+            Assert.False(File.Exists(installedIcon));
             Assert.Null(registry.OpenSubKey(uninstallKey));
             Assert.False(File.Exists(desktopLink));
             Assert.False(File.Exists(menuLink));

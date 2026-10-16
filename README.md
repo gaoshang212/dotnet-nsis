@@ -52,6 +52,9 @@ executable: bin/MyApp.exe
 outputDirectory: ./dist
 arch: x64
 nsis:
+  # include: ./build/installer.nsh
+  # installerIcon: ./build/installer.ico
+  # uninstallerIcon: ./build/uninstaller.ico
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
@@ -76,12 +79,60 @@ nsis:
 | `nsis.createDesktopShortcut` | 默认 `true`。 |
 | `nsis.createStartMenuShortcut` | 默认 `true`。 |
 | `nsis.runAfterFinish` | 默认 `false`；设为 `true` 后允许安装完成时启动应用。 |
+| `nsis.include` | 可选，单个自定义 `.nsh` 文件路径；省略或设为 `null` 时禁用。 |
+| `nsis.installerIcon` | 可选，安装器 `.ico` 文件；省略或设为 `null` 时使用 NSIS 默认安装图标。 |
+| `nsis.uninstallerIcon` | 可选，卸载器及 Windows 卸载列表的 `.ico` 文件；省略或设为 `null` 时保留默认行为。 |
 
 目录相对 **配置文件所在目录** 解析，不依赖命令执行位置。输入目录内的文件和空目录全部打包；不做排除规则处理，因此应使用干净的发布目录。符号链接、目录联接、未知配置字段和重复字段会报错。配置文本不接受控制字符及 `${` 预处理表达式，避免被 NSIS 当作脚本展开。
 
 安装界面固定简体中文。向导模式保留上游行为：选择的目录不包含应用目录名时，会自动追加应用目录名。默认当前用户路径为用户的 Programs 目录，整机路径为相应的 Program Files 目录。
 
 输出文件为 `{安全应用名}-{版本}-{架构}-Setup.exe`。同名文件只在新构建成功后替换；构建失败保留原安装包。
+
+## 自定义图标
+
+```yaml
+nsis:
+  installerIcon: ./build/installer.ico
+  uninstallerIcon: ./build/uninstaller.ico
+```
+
+两个字段均相对 **YAML 文件所在目录** 解析，也接受绝对路径，可独立配置或使用同一个文件。只接受 `.ico`，不自动转换 PNG/SVG，也不自动查找默认文件。`validate` 检查文件存在性和 ICO 目录结构，具体图像数据由 NSIS 在构建时校验。
+
+`installerIcon` 设置安装包 EXE 图标；`uninstallerIcon` 设置卸载程序 EXE 图标，同时将图标复制到安装目录的 `uninstallerIcon.ico` 并用于 Windows 卸载列表。不配置时，卸载程序使用 NSIS 默认图标，卸载列表使用启动 EXE 图标。两个选项均不修改应用 EXE 或快捷方式图标。
+
+图标定义在自定义 `.nsh` 加载前生成。若原脚本已有 `MUI_ICON`、`MUI_UNICON` 或 `UNINSTALLER_ICON` 定义，请删除对应重复定义；需要由脚本覆盖时使用 `!define /redef`。
+
+## 自定义 NSIS 脚本
+
+通过 `nsis.include` 扩展默认模板，与 electron-builder 的 [include 宏接口](https://www.electron.build/nsis/) 一致。路径相对 YAML 文件所在目录解析，也支持绝对路径；文件必须存在。不自动查找 `build/installer.nsh`，需要显式配置。
+
+```yaml
+nsis:
+  include: ./build/installer.nsh
+```
+
+在 `build/installer.nsh` 中定义需要的钩子：
+
+```nsis
+; 在应用文件解压后执行。
+!macro customInstall
+  DetailPrint "执行自定义安装步骤。"
+!macroend
+
+; 在默认卸载文件清理前执行。
+!macro customUnInstall
+  DetailPrint "执行自定义卸载步骤。"
+!macroend
+```
+
+支持固定模板中已有的宏，例如 `customHeader`、`preInit`、`customInit`、`customUnInit`、`customInstall`、`customUnInstall`、`customRemoveFiles` 和 `customUnInstallSection`。向导模式还支持 `customWelcomePage`、`customPageAfterChangeDir`、`customFinishPage`、`customUnWelcomePage`、`customUninstallPage`。当前安装权限由 YAML 固定，未接入 `customInstallMode`；暂不提供替换整个 `.nsi` 的 `nsis.script`。
+
+自定义脚本目录加入头文件搜索路径，可写 `!include "hooks\actions.nsh"`；脚本内的 Windows 路径使用反斜杠。`${BUILD_RESOURCES_DIR}` 指向该目录，附加文件使用 `File "${BUILD_RESOURCES_DIR}\extra.txt"`；编译工作目录仍是临时模板目录，普通相对 `File` 路径不会自动相对 `.nsh` 解析。脚本建议使用 UTF-8，嵌套脚本的资源也以顶层脚本目录为基准。
+
+安装器和卸载器两阶段均加载脚本，`BUILD_UNINSTALLER` 只在生成卸载器阶段定义。`preInit` 也会在构建时的卸载器生成程序中运行；仅需安装时执行的动作放在 `customInit` 或 `customInstall`。`!system` 等预处理指令在编译时执行，`customRemoveFiles` 会替换默认文件清理。只使用可信脚本，并自行负责自定义动作的升级和卸载行为。脚本编译错误保留在失败目录的 `build.log` 中。
+
+完整示例见 [installer.nsh](examples/build/installer.nsh)，包括欢迎页和附加资源复制。
 
 ## 示例
 

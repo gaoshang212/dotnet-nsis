@@ -210,14 +210,17 @@ public sealed class CommandLineTests
         Assert.False(File.Exists(path));
     }
 
-    /// <summary>验证命令库从 CLI 程序集读取版本，保留原有版本输出。</summary>
+    /// <summary>验证命令库从 CLI 程序集读取版本，兼容 SDK 附加的 Git 提交号。</summary>
     [Fact]
     public async Task VersionUsesCliAssemblyMetadata()
     {
         using var temp = new TestDirectory();
         var result = await RunProcessAsync(temp.Root, "--version");
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal("0.1.0", result.Output.Trim());
+        var version = System.Reflection.CustomAttributeExtensions
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(PackageConfig).Assembly)!
+            .InformationalVersion;
+        Assert.Equal(version, result.Output.Trim());
         Assert.Empty(result.Error);
     }
 
