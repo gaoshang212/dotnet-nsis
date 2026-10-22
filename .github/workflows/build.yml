@@ -1,27 +1,80 @@
 name: 构建与验证
 on:
   push:
+    branches: ['**']
+    tags: ['v*']
   pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      # 固定 Actions 提交，与 nsQuickJs 保持相同的运行时和依赖管理方式。
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
-          dotnet-version: '10.0.x'
+          # .NET 10 构建 slnx 和 Demo；.NET 8 运行 CLI 与回归测试。
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - run: dotnet restore --locked-mode
-      - run: dotnet test --no-restore
+      - run: dotnet build --no-restore
+      - run: dotnet test --no-build --logger "trx;LogFileName=unit.trx"
       - name: 真实构建和当前用户安装验证
         shell: powershell
         run: ./scripts/test-integration.ps1 -Install
-      - run: dotnet publish src/DotnetNsis -c Release -r win-x64 --self-contained true -o artifacts/cli
-      - uses: actions/upload-artifact@v4
+      - name: 打包 NuGet 工具
+        run: dotnet pack src/DotnetNsis -c Release -o artifacts/nuget -p:RestoreLockedMode=true
+      - name: 从本地 NuGet 包安装并验证
+        shell: powershell
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: ./scripts/test-tool-package.ps1 -Tag $env:RELEASE_TAG
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dotnet-nsis-win-x64
-          path: artifacts/cli
-      - uses: actions/upload-artifact@v4
+          name: dotnet-nsis-nuget
+          path: artifacts/nuget/*.nupkg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: 测试结果
           path: tests/**/TestResults/*.trx
+
+  # 仅向 NuGet 发布已通过工具安装验证和版本检查的标签产物。
+  nuget:
+    needs: windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-2022
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dotnet-nsis-nuget
+          path: artifacts/nuget
+      - name: 通过 Trusted Publishing 登录 NuGet.org
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        id: login
+        with:
+          user: gaoshang212
+      - name: 发布到 NuGet.org
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NUGET_API_KEY)) {
+            throw 'Trusted Publishing 未返回临时发布凭据，请检查 NuGet.org 信任策略。'
+          }
+          $version = $env:RELEASE_TAG.Substring(1)
+          $package = "artifacts/nuget/dotnet-nsis.$version.nupkg"
+          if (!(Test-Path -LiteralPath $package)) { throw "缺少标签对应的 NuGet 包：$package" }
+          dotnet nuget push $package --source https://api.nuget.org/v3/index.json --api-key $env:NUGET_API_KEY --skip-duplicate
+          if ($LASTEXITCODE) { throw 'NuGet 发布失败。' }

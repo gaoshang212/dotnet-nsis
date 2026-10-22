@@ -26,6 +26,22 @@ public static class TemplateAdapter
         Replace(target, "include/allowOnlyOneInstallerInstance.nsh", "${APP_EXECUTABLE_FILENAME}", "${APP_PROCESS_FILENAME}");
         Replace(target, "installer.nsi", "WriteUninstaller \"${UNINSTALLER_OUT_FILE}\"",
             "WriteUninstaller \"${DOTNET_NSIS_UNINSTALLER_PATH}\"");
+        // 初始化校验尚未完成时不要创建 /D 指定目录；解压阶段会设置实际输出目录。
+        Replace(target, "installer.nsi", "  SetOutPath $INSTDIR\n", "");
+        // 在旧版卸载前执行校验和备份，覆盖向导、静默与一键安装。
+        Replace(target, "installSection.nsh", "!insertmacro uninstallOldVersion SHELL_CONTEXT", """
+            !ifmacrodef customBeforeInstall
+              !insertmacro customBeforeInstall
+            !endif
+            !insertmacro uninstallOldVersion SHELL_CONTEXT
+            """);
+        // NSIS 使用当前输出目录作为快捷方式工作目录，子目录程序需要自己的目录。
+        Replace(target, "include/installer.nsh", "      CreateShortCut", """
+                  SetOutPath "$INSTDIR\${APP_EXECUTABLE_DIRECTORY}"
+                  CreateShortCut
+            """);
+        Replace(target, "include/installer.nsh", "      # clear error", "      SetOutPath $INSTDIR\n      # clear error");
+        Replace(target, "include/installer.nsh", "        ClearErrors\n        WinShell::SetLnkAUMI", "        SetOutPath $INSTDIR\n        ClearErrors\n        WinShell::SetLnkAUMI");
 
         // 当前用户包固定作用域；整机包继续使用上游提权逻辑。
         Replace(target, "assistedInstaller.nsh", "!ifndef INSTALL_MODE_PER_ALL_USERS\n  !include multiUserUi.nsh\n!endif", "");
@@ -51,7 +67,7 @@ public static class TemplateAdapter
             !macro check64BitAndSetRegView
               !ifdef APP_ARM64
                 ${IfNot} ${IsNativeARM64}
-                  MessageBox MB_OK|MB_ICONSTOP "此安装包需要 Windows ARM64。" /SD IDOK
+                  MessageBox MB_OK|MB_ICONSTOP "$(dotnetNsisRequiresArm64)" /SD IDOK
                   SetErrorLevel 2
                   Quit
                 ${EndIf}
@@ -74,7 +90,7 @@ public static class TemplateAdapter
         File.WriteAllText(path, text.Replace(from, to, StringComparison.Ordinal), Encoding.UTF8);
     }
 
-    /// <summary>生成应用定义、安装选项和中文消息，并引入适配后的上游安装模板。</summary>
+    /// <summary>生成应用定义、安装选项和多语言消息，并引入适配后的上游安装模板。</summary>
     /// <param name="validated">已校验的应用配置、路径及安装标识。</param>
     /// <param name="tools">已准备好的编译器与插件路径。</param>
     /// <param name="templates">本次构建的模板副本目录。</param>
@@ -88,6 +104,7 @@ public static class TemplateAdapter
         string payload, long unpackedSize, string uninstaller, string output, bool buildUninstaller)
     {
         var config = validated.Config;
+        var languages = InstallerLanguages.Resolve(config.Nsis.InstallerLanguages);
         var script = new StringBuilder();
         // 统一追加脚本行，保留指令边界。
         void Line(string line) => script.AppendLine(line);
@@ -113,6 +130,7 @@ public static class TemplateAdapter
         Define("APP_DESCRIPTION", config.ProductName);
         Define("APP_EXECUTABLE_RELATIVE_PATH", validated.ExecutableRelativePath.Replace('/', '\\'));
         Define("APP_PROCESS_FILENAME", Path.GetFileName(validated.ExecutableRelativePath));
+        Define("APP_EXECUTABLE_DIRECTORY", (Path.GetDirectoryName(validated.ExecutableRelativePath) ?? "").Replace('/', '\\'));
         Define("VERSION", config.Version);
         Define("COMPANY_NAME", config.Publisher);
         Define("SHORTCUT_NAME", validated.SafeName);
@@ -136,16 +154,31 @@ public static class TemplateAdapter
         else Define("HIDE_RUN_AFTER_FINISH");
         if (!config.Nsis.CreateDesktopShortcut) Define("DO_NOT_CREATE_DESKTOP_SHORTCUT");
         if (!config.Nsis.CreateStartMenuShortcut) Define("DO_NOT_CREATE_START_MENU_SHORTCUT");
+        if (config.Nsis.DisplayLanguageSelector && languages.Count > 1) Define("DISPLAY_LANG_SELECTOR");
 
         Line("OutFile " + QuoteCompileTime(output));
-        Line($"VIProductVersion {config.Version}.0");
+        Line($"VIProductVersion {(config.Version.Split('.').Length == 3 ? config.Version + ".0" : config.Version)}");
         foreach (var (key, value) in new Dictionary<string, string>
         {
             ["ProductName"] = config.ProductName, ["ProductVersion"] = config.Version,
             ["FileDescription"] = config.ProductName, ["FileVersion"] = config.Version,
             ["LegalCopyright"] = config.Publisher, ["CompanyName"] = config.Publisher
-        }) Line($"VIAddVersionKey /LANG=2052 {key} {Quote(value)}");
-        Line("!macro addLangs\n  !insertmacro MUI_LANGUAGE \"SimpChinese\"\n!macroend");
+        })
+            foreach (var language in languages)
+                Line($"VIAddVersionKey /LANG={language.Lcid} {key} {Quote(value)}");
+        Line("!macro addLangs");
+        foreach (var language in languages) Line($"  !insertmacro MUI_LANGUAGE \"{language.NsisName}\"");
+        Line("!macroend");
+        foreach (var language in languages)
+        {
+            var message = language.Code switch
+            {
+                "zh_CN" => "此安装包需要 Windows ARM64。",
+                "zh_TW" => "此安裝程式需要 Windows ARM64。",
+                _ => "This installer requires Windows ARM64."
+            };
+            Line($"LangString dotnetNsisRequiresArm64 {language.Lcid} {Quote(message)}");
+        }
         foreach (var (flag, name) in new Dictionary<string, string>
         {
             ["updated"] = "isUpdated", ["force-run"] = "isForceRun", ["keep-shortcuts"] = "isKeepShortcuts",
@@ -165,9 +198,12 @@ public static class TemplateAdapter
                 .Deserialize<Dictionary<string, Dictionary<string, string>>>(File.ReadAllText(Path.Combine(templates, name)));
             foreach (var (key, translations) in messages)
             {
-                var value = translations.GetValueOrDefault("zh_CN") ?? translations.GetValueOrDefault("zh") ?? translations["en"];
-                // 上游翻译包含有意保留的 NSIS 宏和运行时变量。
-                Line($"LangString {key} 2052 \"{value.Replace("\r\n", "\n").Replace("\n", "$\\r$\\n")}\"");
+                foreach (var language in languages)
+                {
+                    var value = InstallerLanguages.Translate(translations, language);
+                    // 上游翻译包含有意保留的 NSIS 宏和运行时变量。
+                    Line($"LangString {key} {language.Lcid} \"{value.Replace("\r\n", "\n").Replace("\n", "$\\r$\\n")}\"");
+                }
             }
         }
         // MUI 图标必须在加载页面模板前定义；卸载图标同时用于系统卸载列表。

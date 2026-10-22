@@ -39,7 +39,7 @@ public sealed class ToolCacheTests
     }
 
     /// <summary>根据测试归档计算固定摘要，生成配套工具包定义。</summary>
-    private static ToolDefinition Definition(byte[] bytes) => new("test", "test", "test.tar.gz", Convert.ToHexStringLower(SHA256.HashData(bytes)), "bin/tool.exe");
+    private static ToolDefinition Definition(byte[] bytes) => new("test", "test", "test.tar.gz", Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), "bin/tool.exe");
 
     /// <summary>验证完整缓存无需联网，解压文件损坏后可从本地已验证归档修复。</summary>
     [Fact]

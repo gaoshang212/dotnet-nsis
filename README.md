@@ -1,33 +1,58 @@
 # dotnet-nsis
 
-用 C# 编写的 Windows 安装包 CLI。读取 YAML，把已发布的应用目录打成 NSIS `.exe` 安装包。
+**English** | [简体中文](README.zh-CN.md)
 
-复用固定版本的 electron-builder NSIS 模板。运行时无需 Node.js，也无需手动安装 NSIS 或 7-Zip。首次构建下载工具，后续复用本机缓存。
+An open-source Windows installer CLI written in C#. Read a YAML configuration
+and package a published application directory into an NSIS `.exe` installer.
+Released under the [MIT license](LICENSE); dependencies retain their own
+[licenses](THIRD-PARTY-NOTICES.md).
 
-## 快速开始
+The CLI reuses pinned electron-builder NSIS templates. Node.js is not required,
+and NSIS/7-Zip are downloaded and verified automatically on first use, then
+reused from the local cache.
 
-开发需要 .NET 10 SDK，打包主机使用 Windows x64。安装包可以面向 x64、x86 或 ARM64，每次构建一种架构。
+## Install from NuGet
+
+Once a version has been published to NuGet.org, install it as a .NET tool on
+Windows x64 with the .NET 8 SDK:
 
 ```powershell
-dotnet build
+dotnet tool install --global dotnet-nsis
+dotnet-nsis --help
+# Update an existing installation.
+dotnet tool update --global dotnet-nsis
+```
+
+The NuGet package targets .NET 8 and includes templates and licenses.
+The package is a CLI tool,
+not a library for `PackageReference`. For local packaging and publishing setup,
+see [NuGet distribution](docs/build.md#nuget-distribution).
+
+## Quick start
+
+Develop with the .NET 10 SDK on Windows x64 and install the .NET 8 runtime to
+run the CLI and tests. The SDK requirement applies to building this repository;
+users of the NuGet tool only need .NET 8. Each installer targets one
+application architecture: x64, x86, or ARM64.
+
+```powershell
+dotnet restore --locked-mode
+dotnet build --no-restore
 dotnet run --project src/DotnetNsis -- init
-# 编辑 nsis.yml，填入应用发布目录和启动程序。
+# Edit nsis.yml with the published application directory and entry executable.
 dotnet run --project src/DotnetNsis -- validate
 dotnet run --project src/DotnetNsis -- build
 ```
 
-生成不依赖本机 .NET 运行时的 CLI：
+The CLI is distributed through NuGet. It does not compile the application being packaged or
+install its .NET runtime. Publish that application as self-contained or prepare
+its runtime on the target machine.
 
-```powershell
-dotnet publish src/DotnetNsis -c Release -r win-x64 --self-contained true -o artifacts/cli
-./artifacts/cli/dotnet-nsis.exe build --config ./nsis.yml
-```
+## Command line
 
-分发时复制整个 `artifacts/cli` 目录，包括 `Resources`。CLI 不会编译被打包的应用，也不会安装其 .NET 运行时；应用本身需要自包含发布，或由目标电脑预先准备运行时。
-
-## 命令行
-
-参数解析、帮助和版本输出由 `System.CommandLine 2.0.13` 提供。原有命令保持兼容，`--config` 可简写为 `-c`，也支持等号写法；省略时读取当前目录的 `nsis.yml`。
+Argument parsing, help and version output use `System.CommandLine 2.0.13`.
+`--config` accepts the `-c` alias and equals syntax; the default is `nsis.yml`
+in the current directory.
 
 ```powershell
 dotnet-nsis --help
@@ -35,23 +60,27 @@ dotnet-nsis build --help
 dotnet-nsis --version
 dotnet-nsis init -c ./nsis.yml
 dotnet-nsis validate --config=./nsis.yml
-dotnet-nsis build -c "./配置目录/应用配置.yml"
+dotnet-nsis build -c "./configuration directory/application.yml"
 ```
 
-无参数时显示帮助。未知命令、未知选项或选项缺值返回 `2`，不会执行文件写入或构建。配置选项也可放在子命令之前，如 `dotnet-nsis -c ./nsis.yml build`。
+No arguments displays help. Unknown commands/options and missing option values
+return `2` without writing files or building. The configuration option may
+precede the subcommand: `dotnet-nsis -c ./nsis.yml build`.
 
-## 配置
+## Configuration
 
 ```yaml
 appId: com.example.myapp
-productName: 我的应用
+productName: My Application
 version: 1.0.0
-publisher: 示例公司
+publisher: Example Company
 appDirectory: ./publish
 executable: bin/MyApp.exe
 outputDirectory: ./dist
 arch: x64
 nsis:
+  installerLanguages: [zh_CN, en_US]
+  displayLanguageSelector: false
   # include: ./build/installer.nsh
   # installerIcon: ./build/installer.ico
   # uninstallerIcon: ./build/uninstaller.ico
@@ -63,33 +92,84 @@ nsis:
   runAfterFinish: false
 ```
 
-| 字段 | 规则或默认值 |
+| Field | Rules or default |
 | --- | --- |
-| `appId` | 必填，稳定应用标识；升级时保持不变。允许字母、数字、点、下划线、连字符。 |
-| `productName` | 必填，安装界面显示名。文件名、快捷方式名和默认目录名会替换 Windows 非法字符。 |
-| `version` | 必填，三段数字，每段 0～65535，例如 `1.2.3`。 |
-| `publisher` | 可选，默认空。 |
-| `appDirectory` | 必填，包含完整应用文件的目录。 |
-| `executable` | 必填，相对应用目录的 `.exe` 路径，支持子目录。 |
-| `outputDirectory` | 默认 `./dist`，不得等于或位于应用目录内。 |
-| `arch` | `x64`、`x86` 或 `arm64`，默认 `x64`；应与应用发布架构一致。 |
-| `nsis.oneClick` | 默认 `false`：安装向导；设为 `true`：一键安装。 |
-| `nsis.perMachine` | 默认 `false`：固定当前用户安装；设为 `true`：固定整机安装并请求管理员权限。 |
-| `nsis.allowToChangeInstallationDirectory` | 默认 `true`；一键安装时忽略。 |
-| `nsis.createDesktopShortcut` | 默认 `true`。 |
-| `nsis.createStartMenuShortcut` | 默认 `true`。 |
-| `nsis.runAfterFinish` | 默认 `false`；设为 `true` 后允许安装完成时启动应用。 |
-| `nsis.include` | 可选，单个自定义 `.nsh` 文件路径；省略或设为 `null` 时禁用。 |
-| `nsis.installerIcon` | 可选，安装器 `.ico` 文件；省略或设为 `null` 时使用 NSIS 默认安装图标。 |
-| `nsis.uninstallerIcon` | 可选，卸载器及 Windows 卸载列表的 `.ico` 文件；省略或设为 `null` 时保留默认行为。 |
+| `appId` | Required stable identifier. Letters, digits, dots, underscores and hyphens; keep unchanged for upgrades. |
+| `productName` | Required display name. Invalid Windows filename characters are replaced in filenames, shortcuts and default directory names. |
+| `version` | Required three- or four-part numeric version, each part 0–65535. Windows resources append `.0` to three-part versions. |
+| `publisher` | Optional; empty by default. |
+| `appDirectory` | Required directory containing the complete published application. |
+| `executable` | Required `.exe` path relative to the application directory; subdirectories are supported. |
+| `outputDirectory` | Defaults to `./dist`; cannot equal or be inside the application directory. |
+| `arch` | `x64`, `x86`, or `arm64`; defaults to `x64` and must match the application. |
+| `nsis.installerLanguages` | Defaults to `[zh_CN]`. Ordered list; the first language is the fallback. |
+| `nsis.displayLanguageSelector` | Defaults to `false`. With multiple languages, `true` displays a selector during interactive installation. |
+| `nsis.oneClick` | Defaults to `false` for a wizard; `true` enables one-click installation. |
+| `nsis.perMachine` | Defaults to `false` for fixed per-user installation; `true` requires administrator privileges for fixed per-machine installation. |
+| `nsis.allowToChangeInstallationDirectory` | Defaults to `true`; ignored in one-click mode. |
+| `nsis.createDesktopShortcut` | Defaults to `true`. |
+| `nsis.createStartMenuShortcut` | Defaults to `true`. |
+| `nsis.runAfterFinish` | Defaults to `false`; `true` allows launching the application after installation. |
+| `nsis.include` | Optional single custom `.nsh` file; omitted or `null` disables it. |
+| `nsis.installerIcon` | Optional installer `.ico`; omitted or `null` uses the NSIS default. |
+| `nsis.uninstallerIcon` | Optional uninstaller and Windows uninstall-list `.ico`; omitted or `null` retains default behavior. |
 
-目录相对 **配置文件所在目录** 解析，不依赖命令执行位置。输入目录内的文件和空目录全部打包；不做排除规则处理，因此应使用干净的发布目录。符号链接、目录联接、未知配置字段和重复字段会报错。配置文本不接受控制字符及 `${` 预处理表达式，避免被 NSIS 当作脚本展开。
+Paths are resolved relative to the **YAML file**, independently of the working
+directory. All files and empty directories in the input are packaged without
+exclusion rules, so use a clean publish directory. Symbolic links, junctions,
+unknown fields and duplicate fields are rejected. Configuration text rejects
+control characters and `${` preprocessor expressions.
 
-安装界面固定简体中文。向导模式保留上游行为：选择的目录不包含应用目录名时，会自动追加应用目录名。默认当前用户路径为用户的 Programs 目录，整机路径为相应的 Program Files 目录。
+The default installer language is Simplified Chinese. The wizard retains the
+upstream behavior of appending the application directory name when the selected
+path does not contain it. Per-user installation defaults to the user's Programs
+directory; per-machine installation uses the appropriate Program Files directory.
 
-输出文件为 `{安全应用名}-{版本}-{架构}-Setup.exe`。同名文件只在新构建成功后替换；构建失败保留原安装包。
+Output is `{safe-name}-{version}-{arch}-Setup.exe`. An existing file is replaced
+only after a successful build.
 
-## 自定义图标
+## Installer languages
+
+```yaml
+nsis:
+  installerLanguages: [zh_CN, en_US, zh_TW]
+  displayLanguageSelector: true
+```
+
+The installer and uninstaller include the selected resources, match the system
+language, and fall back to the first entry. The selector applies to the installer;
+silent installation and build-time uninstaller generation do not show it.
+Omitting the list keeps Simplified Chinese only; `init` explicitly enables Chinese
+and English in its generated example.
+
+The pinned electron-builder list contains 27 language codes:
+
+```text
+en_US de_DE fr_FR es_ES zh_CN zh_TW ja_JP ko_KR it_IT nl_NL
+da_DK sv_SE nb_NO fi_FI ru_RU pt_PT pt_BR pl_PL uk_UA cs_CZ
+sk_SK hu_HU ar_SA he_IL tr_TR th_TH vi_VN
+```
+
+Codes are case-insensitive and accept hyphens such as `zh-CN`. Short codes select
+the first matching region, for example `en` → `en_US`, `zh` → `zh_CN`, and
+`pt` → `pt_PT`. Empty/null lists, unknown codes and duplicates are rejected.
+
+Upstream messages fall back to English when a translation is unavailable.
+Project-specific ARM64 messages support Simplified/Traditional Chinese and
+English fallback. Application names and custom script messages are not translated.
+
+## Application GUID
+
+The original, case-sensitive `appId` and namespace
+`50e065bc-3134-11e6-9bab-38c9862bdaf3` produce a UUID v5, matching electron-builder
+when `nsis.guid` is omitted. Versions and display names do not affect it.
+
+Earlier SHA-256 installation identifiers differ and are not migrated
+automatically: uninstall those older packages before installing a new one.
+Matching GUIDs do not establish complete layout or upgrade compatibility with
+electron-builder packages; validate that migration separately.
+
+## Custom icons
 
 ```yaml
 nsis:
@@ -97,44 +177,105 @@ nsis:
   uninstallerIcon: ./build/uninstaller.ico
 ```
 
-两个字段均相对 **YAML 文件所在目录** 解析，也接受绝对路径，可独立配置或使用同一个文件。只接受 `.ico`，不自动转换 PNG/SVG，也不自动查找默认文件。`validate` 检查文件存在性和 ICO 目录结构，具体图像数据由 NSIS 在构建时校验。
+Paths are relative to the YAML file or absolute. Each field is independent and
+may refer to the same file. Only `.ico` is accepted; there is no PNG/SVG conversion
+or automatic discovery. `validate` checks existence and the ICO directory
+structure; NSIS checks the actual image data during compilation.
 
-`installerIcon` 设置安装包 EXE 图标；`uninstallerIcon` 设置卸载程序 EXE 图标，同时将图标复制到安装目录的 `uninstallerIcon.ico` 并用于 Windows 卸载列表。不配置时，卸载程序使用 NSIS 默认图标，卸载列表使用启动 EXE 图标。两个选项均不修改应用 EXE 或快捷方式图标。
+`installerIcon` controls the installer EXE icon. `uninstallerIcon` controls the
+uninstaller EXE, copies `uninstallerIcon.ico` to the installation directory, and
+uses it in the Windows uninstall list. Without it, the uninstaller uses the NSIS
+default and the uninstall list uses the entry EXE icon. Neither option changes
+application or shortcut icons.
 
-图标定义在自定义 `.nsh` 加载前生成。若原脚本已有 `MUI_ICON`、`MUI_UNICON` 或 `UNINSTALLER_ICON` 定义，请删除对应重复定义；需要由脚本覆盖时使用 `!define /redef`。
+Icon definitions precede the custom include. Remove duplicate `MUI_ICON`,
+`MUI_UNICON`, or `UNINSTALLER_ICON` definitions, or explicitly override with
+`!define /redef`.
 
-## 自定义 NSIS 脚本
+## Custom NSIS scripts
 
-通过 `nsis.include` 扩展默认模板，与 electron-builder 的 [include 宏接口](https://www.electron.build/nsis/) 一致。路径相对 YAML 文件所在目录解析，也支持绝对路径；文件必须存在。不自动查找 `build/installer.nsh`，需要显式配置。
+`nsis.include` extends the default template using electron-builder's
+[include macros](https://www.electron.build/nsis/). The file must exist; paths
+are relative to YAML or absolute. There is no automatic `build/installer.nsh`
+discovery.
 
 ```yaml
 nsis:
   include: ./build/installer.nsh
 ```
 
-在 `build/installer.nsh` 中定义需要的钩子：
+Define the hooks you need:
 
 ```nsis
-; 在应用文件解压后执行。
+; Run after extracting application files.
 !macro customInstall
-  DetailPrint "执行自定义安装步骤。"
+  DetailPrint "Running custom installation steps."
 !macroend
 
-; 在默认卸载文件清理前执行。
+; Run before the default uninstall file cleanup.
 !macro customUnInstall
-  DetailPrint "执行自定义卸载步骤。"
+  DetailPrint "Running custom uninstall steps."
 !macroend
 ```
 
-支持固定模板中已有的宏，例如 `customHeader`、`preInit`、`customInit`、`customUnInit`、`customInstall`、`customUnInstall`、`customRemoveFiles` 和 `customUnInstallSection`。向导模式还支持 `customWelcomePage`、`customPageAfterChangeDir`、`customFinishPage`、`customUnWelcomePage`、`customUninstallPage`。当前安装权限由 YAML 固定，未接入 `customInstallMode`；暂不提供替换整个 `.nsi` 的 `nsis.script`。
+Supported upstream hooks include `customHeader`, `preInit`, `customInit`,
+`customUnInit`, `customInstall`, `customUnInstall`, `customRemoveFiles`, and
+`customUnInstallSection`. Wizard mode also supports `customWelcomePage`,
+`customPageAfterChangeDir`, `customFinishPage`, `customUnWelcomePage`, and
+`customUninstallPage`. YAML fixes the installation scope, so `customInstallMode`
+is not connected. Whole-script replacement through `nsis.script` is not supported.
 
-自定义脚本目录加入头文件搜索路径，可写 `!include "hooks\actions.nsh"`；脚本内的 Windows 路径使用反斜杠。`${BUILD_RESOURCES_DIR}` 指向该目录，附加文件使用 `File "${BUILD_RESOURCES_DIR}\extra.txt"`；编译工作目录仍是临时模板目录，普通相对 `File` 路径不会自动相对 `.nsh` 解析。脚本建议使用 UTF-8，嵌套脚本的资源也以顶层脚本目录为基准。
+The include's directory is added to the header search path. Use
+`!include "hooks\actions.nsh"` and Windows backslashes in scripts.
+`${BUILD_RESOURCES_DIR}` points to that directory, so bundled files can use
+`File "${BUILD_RESOURCES_DIR}\extra.txt"`. The compiler's working directory
+remains the temporary template directory; ordinary relative `File` paths are
+not automatically relative to the include. Use UTF-8 scripts and resolve nested
+resources from the top-level include directory.
 
-安装器和卸载器两阶段均加载脚本，`BUILD_UNINSTALLER` 只在生成卸载器阶段定义。`preInit` 也会在构建时的卸载器生成程序中运行；仅需安装时执行的动作放在 `customInit` 或 `customInstall`。`!system` 等预处理指令在编译时执行，`customRemoveFiles` 会替换默认文件清理。只使用可信脚本，并自行负责自定义动作的升级和卸载行为。脚本编译错误保留在失败目录的 `build.log` 中。
+Both installer and uninstaller compilation load the include.
+`BUILD_UNINSTALLER` is defined only during uninstaller generation. `preInit`
+also runs in the build-time uninstaller generator; put install-only actions in
+`customInit` or `customInstall`. Directives such as `!system` execute at compile
+time, and `customRemoveFiles` replaces default cleanup. Use trusted scripts and
+handle their upgrade/uninstall behavior. Compilation errors remain in the
+failed build directory's `build.log`.
 
-完整示例见 [installer.nsh](examples/build/installer.nsh)，包括欢迎页、数据目录选择页和附加资源复制。
+The CLI also provides `customBeforeInstall`, a project-specific extension that
+runs before old-version uninstall and new-file extraction in wizard, silent and
+one-click modes. Use it for backup or preflight validation. On failure, set a
+nonzero exit code and `Quit` to prevent removal of the old installation.
+`customInstall` still runs after extraction. Shortcut working directories match
+the entry EXE's directory, including subdirectory entries.
 
-示例在安装目录页之后显示“数据存储文件夹”，支持输入路径和浏览文件夹，默认使用最终安装目录下的 `Data`。安装时创建所选目录，并通过 Windows PowerShell 将绝对路径写入安装目录的 UTF-8 文件 `data-directory.json`；升级时读取已有 JSON 配置。静默及一键安装不显示此页，优先使用已有配置，否则使用默认目录。此配置用于演示，`HelloApp` 不读取它。
+### Data-directory example
+
+[installer.nsh](examples/build/installer.nsh) demonstrates a welcome page,
+data-directory page and additional resources. The data directory defaults to
+`Data` under the final installation directory. The page accepts typed or browsed
+paths. Silent and one-click installs reuse existing configuration or the default.
+
+[data-directory.js](examples/build/data-directory.js) validates paths and uses
+nsQuickJs `fs.writeText` to write `data-directory.json`; before upgrades it checks
+the old file size, reads it through `fs.readText`, and parses the JSON. HelloApp
+does not consume this demonstration configuration.
+
+The example bundles the `0.1.0` x86 Unicode plugin with `fs` support and licenses
+under `examples/build/nsQuickJs`. The installer process is x86 for all three
+application architectures. No PowerShell or Node.js is needed during installation.
+Keep the complete `build` directory when copying the example. Plugin failures and
+corrupt configuration abort installation.
+
+JSON is limited to 16 KiB and directory paths to 1023 UTF-16 code units. New JSON
+is UTF-8 without a BOM and preserves Chinese characters; older BOM/Unicode-escaped
+files remain readable. NSIS sends the page value in chunks instead of performing
+JSON byte I/O.
+
+Each call sets `rootDir` to the current installation directory and explicitly
+enables `allowFileAccess`. A unique temporary trusted script is extracted there,
+loaded and deleted; the context is destroyed after use. Changing the installation
+directory creates a context with the new root. NSIS creates external data
+directories; plugin file access stays within its root.
 
 ```json
 {
@@ -142,56 +283,113 @@ nsis:
 }
 ```
 
-示例不修改数据目录权限。安装目录内的数据会随升级或卸载清理；需要长期保留数据时，请选择安装目录外且应用用户可写的位置。
+This example does not change directory permissions. Data inside the installation
+directory is removed on upgrade/uninstall. For persistent data, select an external
+directory writable by the application user.
 
-## 示例
+## Examples
+
+The independent [InstallerDemo](examples/InstallerDemo/README.md) reproduces the
+original SetupFactory installation flow, including subdirectory entry points, four-part
+repair/upgrade versions, five-process blocking, configuration backup/restore,
+DataPath selection, and writable Conf/Data/Log directories.
+
+The demo uses `InstallerDemo` names while preserving the directory structure and
+local provenance, including the original script directory
+`D:\workspace\csharp\NeuracleEMG\SetupFactoryScript`.
+It has its own application ID and generated executables; it
+does not include the real product or require those external source directories.
+Its README records behavior differences and remaining work.
+
+Build the smaller HelloApp example:
 
 ```powershell
 dotnet publish examples/HelloApp -r win-x64 --self-contained true -o examples/publish
 dotnet run --project src/DotnetNsis -- build --config examples/nsis.yml
 ```
 
-生成 `artifacts/installers/NSIS 示例应用-1.0.0-x64-Setup.exe`。
-
-静默安装支持 NSIS 的 `/S` 和 `/D=`。`/D=` 必须位于命令末尾，值不加引号；可执行文件路径按 shell 规则加引号。
+The result is `artifacts/installers/NSIS 示例应用-1.0.0-x64-Setup.exe`.
+NSIS supports `/S` for silent installation and `/D=` for the destination.
+`/D=` must be last and its value unquoted; quote the executable path as required
+by the shell.
 
 ```powershell
 & './artifacts/installers/NSIS 示例应用-1.0.0-x64-Setup.exe' /S
 ```
 
-在 Windows 已安装的应用列表中卸载，或运行安装目录中的 `Uninstall {安全应用名}.exe`。同一 `appId` 的新版本使用上游旧版本卸载和覆盖安装流程；首版验收范围是同架构、同安装权限升级。应用数据应放在安装目录外，安装目录内的内容会被卸载或升级清理。
+Uninstall through Windows Installed apps or
+`Uninstall {safe-name}.exe` in the installation directory. Upgrades with the
+same `appId` use upstream old-version removal and replacement. The supported
+initial scope is same-architecture, same-installation-scope upgrades. Keep
+application data outside the installation directory.
 
-签名和自动更新未启用。按当前设计，保留上游更新参数和应用数据删除逻辑，但 CLI 不生成更新配置、不启用默认数据删除，也不提供相应 YAML 开关。
+Signing and automatic updates are not enabled. Upstream update arguments and
+application-data deletion branches remain, but the CLI does not generate update
+configuration, enable default data deletion, or expose corresponding YAML switches.
 
-## 缓存与错误排查
+## Cache and troubleshooting
 
-工具缓存位于 `%LOCALAPPDATA%/dotnet-nsis/cache`：
+Tools are cached at `%LOCALAPPDATA%/dotnet-nsis/cache`:
 
-- NSIS 工具包 `1.2.1`，包含 NSIS `3.12` 和插件。
-- 7-Zip 工具包 `1.0.1`，使用 Windows x64 可执行程序。
-- 下载归档校验固定 SHA-256；缓存文件校验各自摘要，损坏后从已验证归档修复。
-- 缓存完整后可以离线打包。多个进程通过依赖锁避免重复写入缓存。
+- NSIS tool bundle `1.2.1`, containing NSIS `3.12` and plugins.
+- 7-Zip tool bundle `1.0.1`, using Windows x64 executables.
+- Fixed SHA-256 checks for downloads and cached files; damaged cache entries are
+  repaired from verified archives.
+- Offline builds once the cache is complete; dependency locks coordinate
+  concurrent processes.
 
-构建失败时，输出目录中的 `.dotnet-nsis-{随机编号}` 会保留应用副本、生成脚本和 `build.log`；成功后清理。命令成功时标准输出打印安装包绝对路径，进度写入标准错误。
+Failed builds retain the application copy, generated scripts and `build.log`
+under `.dotnet-nsis-{random-id}` in the output directory. Successful builds remove
+that temporary directory. Standard output prints the resulting absolute path;
+progress goes to standard error.
 
-退出码：`0` 成功，`2` 配置错误，`1` 下载或构建错误，`130` 用户取消。压缩后应用达到 2 GB 时提前报错，避免生成超过 NSIS 单包限制的安装包。
+Exit codes: `0` success, `2` configuration error, `1` download/build error,
+`130` cancellation. Compressed applications at or above 2 GB are rejected to
+avoid NSIS single-package limits.
 
-## 测试
+## Tests
 
 ```powershell
 dotnet test
-# 下载真实工具并验证 3 架构 × 2 模式 × 2 安装权限的构建。
+# Download real tools and verify three architectures, two modes and two scopes.
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-integration.ps1
-# 另外执行 x86/x64 的当前用户安装、升级、启动和卸载。
+# Also run per-user x86/x64 installation, upgrade, launch and uninstall.
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-integration.ps1 -Install
 ```
 
-安装测试使用随机应用标识和临时安装目录，测试结束清理快捷方式、注册表项及测试数据。建议在测试用 Windows 环境运行。测试检查子目录程序、文件完整性、空目录、快捷方式目标、版本升级和卸载后保留用户数据。
+Installer tests use random application IDs and temporary paths, cleaning up their
+shortcuts, registry entries and data. Run them in a Windows test environment.
+Checks include subdirectory entry points, file integrity, empty directories,
+shortcut targets, upgrades and external user-data preservation.
 
-普通 `dotnet test` 明确跳过依赖下载及真实安装测试。整机 UAC 交互、向导页面交互和 ARM64 实际安装需在对应环境验证。
+Ordinary `dotnet test` explicitly skips real toolchain and installation tests.
+Per-machine UAC, wizard interactions and actual ARM64 installation require
+separate environments. See [validation scope](docs/validation.md).
 
-## 模板来源
+## Template sources
 
-上游固定提交：[`8eff005219db1d17363add3ef4902e5b14798241`](https://github.com/electron-userland/electron-builder/tree/8eff005219db1d17363add3ef4902e5b14798241/packages/app-builder-lib/templates/nsis)。原始模板随 CLI 分发，适配只作用于每次构建的临时副本。改动说明见 [第三方资源说明](THIRD-PARTY-NOTICES.md)。
+Installer templates come from [electron-builder's NSIS template directory](https://github.com/electron-userland/electron-builder/tree/8eff005219db1d17363add3ef4902e5b14798241/packages/app-builder-lib/templates/nsis)
+(`packages/app-builder-lib/templates/nsis`). The link points to the pinned commit
+used by this project so the template version can be traced.
+Original templates ship with the CLI; adaptations affect temporary build copies
+only. See [third-party notices](THIRD-PARTY-NOTICES.md) for the full commit hash
+and adaptation details.
 
-开发时可运行 `python scripts/vendor.py` 重新获取该固定提交。Python 只用于维护模板，CLI 运行不依赖 Python。
+Developers can refresh that pinned snapshot with `python scripts/vendor.py`.
+Python is not a CLI runtime dependency.
+
+## Contributing and releases
+
+See [contributing](CONTRIBUTING.md), [security reports](SECURITY.md),
+[changelog](CHANGELOG.md), and [build/release instructions](docs/build.md).
+
+GitHub Actions publishes the tested `dotnet-nsis` tool package to NuGet.org
+after a matching `vX.Y.Z` tag passes builds and real installer tests, using
+Trusted Publishing (OIDC) for the `gaoshang212` NuGet account. Configure the NuGet
+trust policy described in the release guide; no long-lived API key secret is needed. Every build
+packs and installs the tool from a local-only feed and checks a real NSIS build
+before uploading its `.nupkg` artifact. See the release guide for setup.
+
+HelloApp, InstallerDemo and local provenance notes remain in the source repository.
+The NuGet package contains the CLI, templates, licenses and documentation;
+use the complete source checkout for example build commands and linked example files.

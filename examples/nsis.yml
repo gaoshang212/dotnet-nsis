@@ -8,6 +8,8 @@ executable: HelloApp.exe
 outputDirectory: ../artifacts/installers
 arch: x64
 nsis:
+  installerLanguages: [zh_CN, en_US]
+  displayLanguageSelector: true
   include: ./build/installer.nsh
   # 可选：填入自己的 ICO 文件路径。
   # installerIcon: ./build/installer.ico

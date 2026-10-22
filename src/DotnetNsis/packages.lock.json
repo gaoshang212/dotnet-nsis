@@ -1,7 +1,7 @@
 {
   "version": 1,
   "dependencies": {
-    "net10.0": {
+    "net8.0": {
       "System.CommandLine": {
         "type": "Direct",
         "requested": "[2.0.13, )",
@@ -15,6 +15,6 @@
         "contentHash": "SgMOdxbz8X65z8hraIs6hOEdnkH6hESTAIUa7viEngHOYaH+6q5XJmwr1+yb9vJpNQ19hCQY69xbFsLtXpobQA=="
       }
     },
-    "net10.0/win-x64": {}
+    "net8.0/win-x64": {}
   }
 }

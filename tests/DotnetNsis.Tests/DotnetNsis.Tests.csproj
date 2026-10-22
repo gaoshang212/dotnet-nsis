@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- 在工具支持的最低运行时执行回归测试。 -->
+    <TargetFramework>net8.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
@@ -9,5 +11,6 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.1" PrivateAssets="all" />
     <ProjectReference Include="../../src/DotnetNsis/DotnetNsis.csproj" />
     <Using Include="Xunit" />
+    <Compile Include="../../examples/InstallerDemo/App/Program.cs" Link="InstallerDemo/Program.cs" />
   </ItemGroup>
 </Project>

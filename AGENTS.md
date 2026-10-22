@@ -2,7 +2,7 @@
 
 ## 项目结构与职责
 
-- `src/DotnetNsis/`：.NET 10 CLI。`CommandLineApplication` 使用 System.CommandLine 定义命令和选项，`Configuration` 校验 YAML，`ToolCache` 管理依赖，`TemplateAdapter` 适配模板，`PackageBuilder` 编排打包，`ProcessRunner` 执行外部工具。
+- `src/DotnetNsis/`：.NET 8 CLI。`CommandLineApplication` 使用 System.CommandLine 定义命令和选项，`Configuration` 校验 YAML，`ToolCache` 管理依赖，`TemplateAdapter` 适配模板，`PackageBuilder` 编排打包，`ProcessRunner` 执行外部工具。
 - `src/DotnetNsis/Resources/`：固定版本的 electron-builder 原始模板及第三方许可证。
 - `tests/DotnetNsis.Tests/`：xUnit 单元测试、构建矩阵和实际安装测试。
 - `examples/`：示例应用与 `nsis.yml`；`scripts/`：模板获取与集成测试脚本。
@@ -10,7 +10,7 @@
 
 ## 构建与开发命令
 
-在仓库根目录执行，开发需要 .NET 10 SDK；真实打包使用 Windows x64。
+在仓库根目录执行，开发需要 .NET 10 SDK，运行 CLI 与测试需要 .NET 8 运行时；真实打包使用 Windows x64。Demo 保持 .NET 10 目标，分发的 NuGet 工具以 .NET 8 为运行基线。
 
 ```powershell
 dotnet restore --locked-mode
@@ -19,16 +19,21 @@ dotnet test --no-restore
 dotnet run --project src/DotnetNsis -- init
 dotnet run --project src/DotnetNsis -- validate --config examples/nsis.yml
 dotnet run --project src/DotnetNsis -- build --config examples/nsis.yml
-dotnet publish src/DotnetNsis -c Release -r win-x64 --self-contained true -o artifacts/cli
+dotnet pack src/DotnetNsis -c Release -o artifacts/nuget -p:RestoreLockedMode=true
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-tool-package.ps1
 ```
 
-依次用于锁定依赖还原、编译、测试、生成配置、校验、打包及发布 CLI。示例打包前按 README 发布 `HelloApp`。分发 CLI 时保留完整发布目录及 `Resources`。
+依次用于锁定依赖还原、编译、测试、生成配置、校验、打包应用及生成和验证 NuGet 工具包。示例打包前按 README 发布 `HelloApp`。NuGet 包须包含 `Resources`、许可证和文档。
+
+最后两条生成并验证 NuGet `.NET Tool` 包，包 ID 与命令均为 `dotnet-nsis`，需要 .NET 8。
+NuGet 发布沿用 `vX.Y.Z` 标签流程，通过 Trusted Publishing（OIDC）以 `gaoshang212` 登录，仅发布任务授予 `id-token: write`；具体配置见 `docs/build.md`。
+修改分发配置时验证 NuGet 工具包安装，保留示例和本机来源说明。
 
 ## 编码风格与命名
 
 C# 使用四空格缩进、文件范围命名空间和可空引用类型。类型、方法及属性使用 `PascalCase`，参数和局部变量使用 `camelCase`，异步方法以 `Async` 结尾并传递取消令牌。YAML 字段使用 `camelCase`，缩进两空格。
 
-保持现有格式；目前没有专用格式化器或 lint 配置。编译警告视为错误。说明、注释和面向用户的提示使用简洁中文，保留上游许可证原文。外部进程优先使用 `ArgumentList`，避免拼接 shell 命令。
+保持现有格式，遵循 `.editorconfig` 和 `.gitattributes`；没有专用格式化器或 lint 命令。编译警告视为错误。实现注释和面向用户的 CLI 提示使用简洁中文，保留上游许可证原文。默认 `README.md` 使用英文，与 `README.zh-CN.md` 同步；贡献指南及 `docs/` 文档使用英文。保留现有 Demo 和本机来源说明，安装流程示例的项目与模块统一使用 InstallerDemo 名称。外部进程优先使用 `ArgumentList`，避免拼接 shell 命令。
 
 ## 注释要求
 
@@ -49,7 +54,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-integration.ps1
 
 ## 提交与拉取请求
 
-当前目录尚无 Git 仓库或提交历史，不能推断既有提交规范。建议使用 `feat:`、`fix:`、`docs:`、`test:` 前缀及简短中文说明，一次提交聚焦一项改动。
+仓库已存在 Git 历史。新提交参照 nsQuickJs 的开源规范，使用 `feat:`、`fix:`、`docs:`、`test:` 等 Conventional Commits 前缀及简短英文说明，正文使用英文，一次提交聚焦一项改动。
 
 PR 说明问题、行为变化和验证结果；有关联任务则附链接。配置或模板变更应同步示例、README 和测试。安装界面变化附截图，未验证的平台明确标注。
 

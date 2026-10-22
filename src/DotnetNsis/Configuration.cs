@@ -14,7 +14,7 @@ public sealed class PackageConfig
     public string AppId { get; set; } = "";
     /// <summary>安装界面显示的应用名称。</summary>
     public string ProductName { get; set; } = "";
-    /// <summary>写入安装包和卸载信息的三段数字版本号。</summary>
+    /// <summary>写入安装包和卸载信息的三段或四段数字版本号。</summary>
     public string Version { get; set; } = "";
     /// <summary>安装包版本信息和卸载列表中的发布者名称。</summary>
     public string Publisher { get; set; } = "";
@@ -33,6 +33,10 @@ public sealed class PackageConfig
 /// <summary>控制 NSIS 安装包的用户交互及安装行为。</summary>
 public sealed class NsisOptions
 {
+    /// <summary>安装语言列表；默认简体中文，首项作为系统语言不匹配时的回退语言。</summary>
+    public string[] InstallerLanguages { get; set; } = ["zh_CN"];
+    /// <summary>是否在非静默安装时显示语言选择框，默认关闭。</summary>
+    public bool DisplayLanguageSelector { get; set; }
     /// <summary>可选的自定义 .nsh 文件；相对路径以配置文件所在目录为基准。</summary>
     public string? Include { get; set; }
     /// <summary>安装器的 .ico 文件路径；省略时使用 NSIS 默认图标。</summary>
@@ -88,6 +92,8 @@ public static class Configuration
         outputDirectory: ./dist
         arch: x64
         nsis:
+          installerLanguages: [zh_CN, en_US]
+          displayLanguageSelector: false
           # 可选：通过宏扩展默认模板，路径相对本配置文件。
           # include: ./build/installer.nsh
           # installerIcon: ./build/installer.ico
@@ -132,9 +138,9 @@ public static class Configuration
             throw new ConfigException("appId 只能包含字母、数字、点、下划线和连字符，最多 128 个字符。");
         CheckText(config.ProductName, "productName");
         CheckText(config.Version, "version");
-        if (!Regex.IsMatch(config.Version, @"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$") ||
+        if (!Regex.IsMatch(config.Version, @"^(0|[1-9]\d*)(\.(0|[1-9]\d*)){2,3}$") ||
             config.Version.Split('.').Any(x => !ushort.TryParse(x, out _)))
-            throw new ConfigException("version 必须为三段数字，每段范围为 0～65535，例如 1.0.0。");
+            throw new ConfigException("version 必须为三段或四段数字，每段范围为 0～65535，例如 1.0.0 或 1.0.0.1。");
         if (config.Publisher is null) throw new ConfigException("publisher 不能为 null。");
         CheckText(config.Publisher, "publisher", allowEmpty: true);
         CheckText(config.AppDirectory, "appDirectory");
@@ -143,6 +149,7 @@ public static class Configuration
         if (config.Arch is not ("x64" or "x86" or "arm64"))
             throw new ConfigException("arch 必须为 x64、x86 或 arm64。");
         if (config.Nsis is null) throw new ConfigException("nsis 不能为 null。");
+        _ = InstallerLanguages.Resolve(config.Nsis.InstallerLanguages);
 
         string? includeFile = null;
         if (config.Nsis.Include is not null)
@@ -236,11 +243,16 @@ public static class Configuration
         return safe;
     }
 
-    /// <summary>仅根据应用标识生成稳定 GUID，使版本和显示名称变化不影响升级识别。</summary>
+    /// <summary>使用 electron-builder 命名空间和 appId 生成 UUID v5，版本及显示名称不影响标识。</summary>
     public static string StableGuid(string appId)
     {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes("dotnet-nsis:" + appId));
-        return new Guid(bytes.AsSpan(0, 16)).ToString();
+        var namespaceBytes = new Guid("50e065bc-3134-11e6-9bab-38c9862bdaf3").ToByteArray(bigEndian: true);
+        var nameBytes = Encoding.UTF8.GetBytes(appId);
+        var hash = SHA1.HashData([.. namespaceBytes, .. nameBytes]);
+        // UUID 按网络字节序写入版本 5 和 RFC 变体位；SHA-1 仅用于稳定标识。
+        hash[6] = (byte)((hash[6] & 0x0f) | 0x50);
+        hash[8] = (byte)((hash[8] & 0x3f) | 0x80);
+        return new Guid(hash.AsSpan(0, 16), bigEndian: true).ToString();
     }
 }
 

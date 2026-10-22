@@ -1,0 +1,17 @@
+appId: com.dotnetnsis.demo.installer
+productName: InstallerDemo 安装演示
+version: 1.0.0.0
+publisher: dotnet-nsis Demo
+appDirectory: ../../artifacts/installer-demo/payload
+executable: Neuracle.InstallerDemo.View/net8.0-windows/Neuracle.InstallerDemo.View.exe
+outputDirectory: ../../artifacts/installer-demo/installers
+arch: x64
+nsis:
+  include: ./build/installer.nsh
+  installerLanguages: [zh_CN]
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: false
+  runAfterFinish: false

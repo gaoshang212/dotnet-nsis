@@ -165,7 +165,7 @@ public sealed class ToolCache(HttpClient http, string cacheDirectory, Action<str
     internal static async Task<string> HashAsync(string path, CancellationToken cancellationToken)
     {
         await using var stream = File.OpenRead(path);
-        return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellationToken));
+        return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
     }
 
     /// <summary>记录缓存对应的归档摘要及解压文件摘要，用于检测损坏或缺失。</summary>

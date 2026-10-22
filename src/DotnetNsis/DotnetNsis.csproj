@@ -1,16 +1,40 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- 工具运行时以 .NET 8 为基线，开发 SDK 由仓库 global.json 统一选择。 -->
+    <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>dotnet-nsis</AssemblyName>
     <RootNamespace>DotnetNsis</RootNamespace>
     <Version>0.1.0</Version>
-    <!-- 固定交付目标，避免普通还原和自包含发布生成不同的依赖锁。 -->
-    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <Description>将已发布的应用目录打包为 Windows NSIS 安装程序。</Description>
+    <Authors>dotnet-nsis contributors</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageId>dotnet-nsis</PackageId>
+    <PackageProjectUrl>https://github.com/gaoshang212/dotnet-nsis</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/gaoshang212/dotnet-nsis.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dotnet-nsis</ToolCommandName>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>nsis;installer;windows;dotnet-tool</PackageTags>
+    <!-- NuGet 使用单个依赖 .NET 8 的工具包。 -->
+    <CreateRidSpecificToolPackages>false</CreateRidSpecificToolPackages>
+    <UseAppHost Condition="'$(RuntimeIdentifier)' == ''">false</UseAppHost>
+    <!-- 为 Windows x64 工具入口还原 apphost，保持依赖锁中的目标架构。 -->
+    <PackAsToolShimRuntimeIdentifiers>win-x64</PackAsToolShimRuntimeIdentifiers>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.13" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
-    <Content Include="Resources/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Resources/**/*" Pack="false" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- 随完整 CLI 目录分发项目许可、第三方声明和使用文档。 -->
+    <Content Include="../../LICENSE;../../README.md;../../README.zh-CN.md;../../THIRD-PARTY-NOTICES.md;../../CHANGELOG.md;../../SECURITY.md;../../CONTRIBUTING.md"
+             Link="%(Filename)%(Extension)" Pack="false" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../docs/**/*" Link="docs/%(RecursiveDir)%(Filename)%(Extension)"
+             Pack="false" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- NuGet 页面使用独立说明，完整文档与模板由工具发布布局一并收录。 -->
+    <Content Update="../../docs/nuget-readme.md" Pack="true" PackagePath="README.md" />
+    <Content Update="../../LICENSE" Pack="true" PackagePath="/" />
     <InternalsVisibleTo Include="DotnetNsis.Tests" />
   </ItemGroup>
 </Project>

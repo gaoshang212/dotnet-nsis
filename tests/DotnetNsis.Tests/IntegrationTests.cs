@@ -116,6 +116,16 @@ public sealed class IntegrationTests
         using var http = new HttpClient();
         CopyFixture(temp, arch);
         var settings = Config(Guid.NewGuid().ToString("N"), arch, oneClick, perMachine);
+        // x64 编译全部支持语言，x86 验证纯英语，ARM64 保留默认简体中文。
+        settings.Nsis.InstallerLanguages = arch switch
+        {
+            "x64" => ["en_US", "de_DE", "fr_FR", "es_ES", "zh_CN", "zh_TW", "ja_JP", "ko_KR",
+                "it_IT", "nl_NL", "da_DK", "sv_SE", "nb_NO", "fi_FI", "ru_RU", "pt_PT", "pt_BR",
+                "pl_PL", "uk_UA", "cs_CZ", "sk_SK", "hu_HU", "ar_SA", "he_IL", "tr_TR", "th_TH", "vi_VN"],
+            "x86" => ["en_US"],
+            _ => ["zh_CN"]
+        };
+        settings.Nsis.DisplayLanguageSelector = true;
         AddCustomInclude(temp, settings);
         AddIcons(temp, settings);
         // 在构建矩阵中覆盖独立配置，安装测试另行覆盖同时配置两个图标。
@@ -141,6 +151,8 @@ public sealed class IntegrationTests
         using var http = new HttpClient();
         CopyFixture(temp, arch);
         var config = Config(Guid.NewGuid().ToString("N"), arch, oneClick, false);
+        config.Nsis.InstallerLanguages = ["en_US", "zh_CN"];
+        config.Nsis.DisplayLanguageSelector = true;
         AddCustomInclude(temp, config);
         AddIcons(temp, config);
         var first = Configuration.Validate(config, temp.Root);
@@ -220,7 +232,11 @@ public sealed class IntegrationTests
         var type = Type.GetTypeFromProgID("WScript.Shell")!;
         dynamic shell = Activator.CreateInstance(type)!;
         dynamic shortcut = shell.CreateShortcut(path);
-        try { Assert.Equal(expected, (string)shortcut.TargetPath, ignoreCase: true); }
+        try
+        {
+            Assert.Equal(expected, (string)shortcut.TargetPath, ignoreCase: true);
+            Assert.Equal(Path.GetDirectoryName(expected), (string)shortcut.WorkingDirectory, ignoreCase: true);
+        }
         finally
         {
             System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);

@@ -16,6 +16,11 @@ foreach ($arch in @('x64', 'x86', 'arm64')) {
     if ($LASTEXITCODE -ne 0) { throw "示例应用发布失败：$arch" }
 }
 # 保存调用者环境，测试结束或失败后统一恢复。
+if ($Install) {
+    # InstallerDemo 生命周期测试需要真实的自包含演示入口和随包文件清单。
+    & (Join-Path $repo 'examples/InstallerDemo/build.ps1') -CurrentUser -PrepareOnly
+    if ($LASTEXITCODE -ne 0) { throw 'InstallerDemo 示例准备失败。' }
+}
 $oldIntegration = $env:DOTNET_NSIS_INTEGRATION
 $oldInstall = $env:DOTNET_NSIS_INSTALL_TESTS
 $oldFixtures = $env:DOTNET_NSIS_FIXTURES

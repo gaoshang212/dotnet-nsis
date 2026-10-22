@@ -46,6 +46,8 @@ public sealed class ConfigurationTests
         Assert.False(result.Config.Nsis.PerMachine);
         Assert.False(result.Config.Nsis.RunAfterFinish);
         Assert.True(result.Config.Nsis.CreateDesktopShortcut);
+        Assert.Equal(new[] { "zh_CN" }, result.Config.Nsis.InstallerLanguages);
+        Assert.False(result.Config.Nsis.DisplayLanguageSelector);
         Assert.Null(result.IncludeFile);
         Assert.Null(result.InstallerIconFile);
         Assert.Null(result.UninstallerIconFile);
@@ -158,10 +160,13 @@ public sealed class ConfigurationTests
         Assert.Throws<ConfigException>(() => Configuration.Load(temp.File("nsis.yml", Yaml.Replace("bin/启动.exe", executable))));
     }
 
-    /// <summary>验证版本号必须是无前导零、无后缀且数值范围有效的三段数字。</summary>
+    /// <summary>验证版本号必须是无前导零、无后缀且数值范围有效的三段或四段数字。</summary>
     [Theory]
     [InlineData("1.0")]
     [InlineData("1.0.0-beta")]
+    [InlineData("1.2.3.65536")]
+    [InlineData("1.2.3.04")]
+    [InlineData("1.2.3.4.5")]
     [InlineData("65536.0.0")]
     [InlineData("01.0.0")]
     public void RejectsUnsupportedVersion(string version)
@@ -181,6 +186,52 @@ public sealed class ConfigurationTests
         var second = Configuration.Load(temp.File("two.yml", Yaml.Replace("1.2.3", "2.0.0").Replace("测试应用", "新名称")));
         Assert.Equal(first.AppGuid, second.AppGuid);
         Assert.NotEqual(first.AppGuid, Configuration.StableGuid("com.example.other"));
+    }
+
+    /// <summary>以独立 UUID v5 实现生成的已知结果验证命名空间、字节序、版本位和大小写处理。</summary>
+    [Theory]
+    [InlineData("com.example.test", "d0332c94-b88b-51c1-8182-fec1caa4a877")]
+    [InlineData("com.example.myapp", "b766db3c-f5f8-56aa-ba5a-6fab70ce4c3a")]
+    [InlineData("Com.Example.App", "e85e47f9-ee8d-5717-b024-6d7104dd801c")]
+    public void MatchesElectronBuilderUuidV5(string appId, string expected)
+    {
+        Assert.Equal(expected, Configuration.StableGuid(appId));
+    }
+
+    /// <summary>验证 YAML 多语言选项支持区域分隔符、大小写和短代码，且保留语言顺序。</summary>
+    [Fact]
+    public void LoadsInstallerLanguagesAndSelector()
+    {
+        using var temp = new TestDirectory();
+        temp.File("应用目录/bin/启动.exe");
+        var result = Configuration.Load(temp.File("nsis.yml", Yaml + """
+
+            nsis:
+              installerLanguages: [en, zh-cn, ZH_TW, pt-BR]
+              displayLanguageSelector: true
+            """));
+        Assert.True(result.Config.Nsis.DisplayLanguageSelector);
+        Assert.Equal(new[] { "en_US", "zh_CN", "zh_TW", "pt_BR" },
+            InstallerLanguages.Resolve(result.Config.Nsis.InstallerLanguages).Select(x => x.Code));
+    }
+
+    /// <summary>验证空列表、空元素、未知区域、重复别名和脚本注入均被拒绝。</summary>
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("[null]")]
+    [InlineData("['']")]
+    [InlineData("[unknown]")]
+    [InlineData("[en_GB]")]
+    [InlineData("[en, en-US]")]
+    [InlineData("['${LANG}']")]
+    public void RejectsInvalidInstallerLanguages(string languages)
+    {
+        using var temp = new TestDirectory();
+        temp.File("应用目录/bin/启动.exe");
+        var error = Assert.Throws<ConfigException>(() => Configuration.Load(
+            temp.File("nsis.yml", Yaml + $"\nnsis:\n  installerLanguages: {languages}")));
+        Assert.Contains("nsis.installerLanguages", error.Message);
     }
 
     /// <summary>验证输入中的目录联接会被拒绝，且不会删除或修改链接目标。</summary>
