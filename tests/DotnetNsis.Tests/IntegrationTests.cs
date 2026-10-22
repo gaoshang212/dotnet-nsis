@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
 using System.Runtime.Versioning;
+using System.Text;
 using Microsoft.Win32;
 
 namespace DotnetNsis.Tests;
@@ -151,6 +154,8 @@ public sealed class IntegrationTests
         using var http = new HttpClient();
         CopyFixture(temp, arch);
         var config = Config(Guid.NewGuid().ToString("N"), arch, oneClick, false);
+        // 表情字符不能用常见 ANSI 代码页表示，避免中文系统掩盖快捷方式读取的编码问题。
+        config.ProductName += " 😀";
         config.Nsis.InstallerLanguages = ["en_US", "zh_CN"];
         config.Nsis.DisplayLanguageSelector = true;
         AddCustomInclude(temp, config);
@@ -226,22 +231,51 @@ public sealed class IntegrationTests
         }
     }
 
-    /// <summary>读取 Windows 快捷方式，验证其目标为配置的子目录启动程序。</summary>
+    /// <summary>通过 Unicode Shell 接口读取快捷方式，验证目标及工作目录，不依赖系统 ANSI 代码页。</summary>
     private static void AssertShortcut(string path, string expected)
     {
-        var type = Type.GetTypeFromProgID("WScript.Shell")!;
-        dynamic shell = Activator.CreateInstance(type)!;
-        dynamic shortcut = shell.CreateShortcut(path);
+        var type = Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046"), throwOnError: true)!;
+        var shortcut = Activator.CreateInstance(type)!;
         try
         {
-            Assert.Equal(expected, (string)shortcut.TargetPath, ignoreCase: true);
-            Assert.Equal(Path.GetDirectoryName(expected), (string)shortcut.WorkingDirectory, ignoreCase: true);
+            ((IPersistFile)shortcut).Load(path, 0);
+            var link = (IShellLinkW)shortcut;
+            var target = new StringBuilder(260);
+            // GetPath 返回 S_FALSE 时没有有效目标，不能把空字符串当作成功。
+            Assert.Equal(0, link.GetPath(target, target.Capacity, IntPtr.Zero, 0));
+            var directory = new StringBuilder(260);
+            link.GetWorkingDirectory(directory, directory.Capacity);
+            Assert.Equal(expected, target.ToString(), ignoreCase: true);
+            Assert.Equal(Path.GetDirectoryName(expected), directory.ToString(), ignoreCase: true);
         }
         finally
         {
-            System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
-            System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+            Marshal.FinalReleaseComObject(shortcut);
         }
+    }
+
+    /// <summary>按原生虚表顺序声明读取目标和工作目录所需的前六个 Unicode Shell Link 方法。</summary>
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellLinkW
+    {
+        /// <summary>读取快捷方式目标，保留 HRESULT 以区分有效路径与空目标。</summary>
+        [PreserveSig]
+        int GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int capacity, IntPtr findData, uint flags);
+
+        /// <summary>获取目标标识列表，保留此方法以匹配原生接口槽位。</summary>
+        void GetIDList(out IntPtr itemIdList);
+
+        /// <summary>设置目标标识列表，保留此方法以匹配原生接口槽位。</summary>
+        void SetIDList(IntPtr itemIdList);
+
+        /// <summary>读取描述，保留此方法以匹配原生接口槽位。</summary>
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder description, int capacity);
+
+        /// <summary>设置描述，保留此方法以匹配原生接口槽位。</summary>
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string description);
+
+        /// <summary>读取快捷方式的 Unicode 工作目录。</summary>
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder directory, int capacity);
     }
 
     /// <summary>按 NSIS 的原始参数规则运行安装器或卸载器，限制运行时间并断言成功。</summary>
